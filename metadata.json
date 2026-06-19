@@ -1,0 +1,6 @@
+{
+  "name": "Offline Hub",
+  "description": "Offline cache browser and system dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

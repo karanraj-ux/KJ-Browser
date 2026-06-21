@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,7 +35,7 @@ import kotlinx.coroutines.delay
 fun MainApp(viewModel: MainViewModel) {
     val navController = rememberNavController()
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Browser", "Offline Vault", "Quick Answer", "Efficiency")
+    val tabs = listOf("Browser", "Offline Vault", "Quick Answer", "Efficiency", "Settings")
 
     Scaffold(
         topBar = {
@@ -58,6 +59,7 @@ fun MainApp(viewModel: MainViewModel) {
                                 1 -> navController.navigate("offline_vault") { popUpTo("offline_vault") { inclusive = true } }
                                 2 -> navController.navigate("quick_answer") { popUpTo("quick_answer") { inclusive = true } }
                                 3 -> navController.navigate("system_info") { popUpTo("system_info") { inclusive = true } }
+                                4 -> navController.navigate("power_settings") { popUpTo("power_settings") { inclusive = true } }
                             }
                         },
                         icon = {
@@ -66,7 +68,8 @@ fun MainApp(viewModel: MainViewModel) {
                                     0 -> Icons.Default.Search // Browser
                                     1 -> Icons.Default.List // Offline Vault
                                     2 -> Icons.Default.Info // Quick Answer - reuse info icon or similar
-                                    else -> Icons.Default.Info // Efficiency
+                                    3 -> Icons.Default.Info // Efficiency
+                                    else -> Icons.Default.Settings // Settings
                                 },
                                 contentDescription = title
                             )
@@ -104,6 +107,9 @@ fun MainApp(viewModel: MainViewModel) {
             }
             composable("system_info") {
                 SystemInfoScreen(viewModel)
+            }
+            composable("power_settings") {
+                PowerSettingsScreen()
             }
             composable("offline_view") {
                 val htmlContent = navController.previousBackStackEntry?.savedStateHandle?.get<String>("htmlContent") ?: ""
@@ -230,78 +236,88 @@ fun SystemInfoScreen(viewModel: MainViewModel) {
     val shizukuRunning = ShizukuHelper.isShizukuRunning()
     val shizukuPermission = ShizukuHelper.hasShizukuPermission()
 
-    val savedPages by viewModel.savedPages.collectAsStateWithLifecycle()
-    val pagesCount = savedPages.size
-    val dataSavedMb = String.format("%.2f", pagesCount * 2.5) // Fake 2.5MB per page avg
-    val batterySaved = String.format("%.2f", pagesCount * 0.15) // Fake 0.15% battery per page
+    val blockedAds by viewModel.blockedAds.collectAsStateWithLifecycle()
+    val blockedVideos by viewModel.blockedVideos.collectAsStateWithLifecycle()
+    val blockedImages by viewModel.blockedImages.collectAsStateWithLifecycle()
+    
+    val dataSavedMb = String.format("%.2f", com.example.util.StatsManager.getDataSavedMb())
+    val batterySaved = String.format("%.2f", com.example.util.StatsManager.getBatterySavedPercent())
 
-    // Mock CPU/RAM stats reading
-    val ramInfo = remember { getRamInfo(context) }
-    val storageInfo = remember { getStorageInfo() }
-
-    Column(modifier = Modifier
+    LazyColumn(modifier = Modifier
         .fillMaxSize()
         .padding(16.dp)) {
-        Text("Efficiency Dashboard", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text("Real-time battery & data savings compared to standard Chrome usage.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-        
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-            Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column {
-                    Text("Data Saved", style = MaterialTheme.typography.bodyMedium)
-                    Text("$dataSavedMb MB", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("Battery Saved", style = MaterialTheme.typography.bodyMedium)
-                    Text("$batterySaved %", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        DashboardCard("Memory (RAM)", ramInfo)
-        Spacer(modifier = Modifier.height(8.dp))
-        DashboardCard("Internal Storage", storageInfo)
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text("Shizuku Status", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-
-        Card(modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 8.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = if (shizukuRunning) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
-            )
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = if (shizukuRunning) "Shizuku Service is RUNNING" else "Shizuku Service is STOPPED",
-                    fontWeight = FontWeight.Bold,
-                    color = if (shizukuRunning) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer
-                )
-                Text(
-                    text = "Permission Granted: $shizukuPermission",
-                    color = if (shizukuRunning) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer
-                )
-                if (shizukuRunning && !shizukuPermission) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Button(onClick = { ShizukuHelper.requestShizukuPermission(1001) }) {
-                        Text("Grant Permission")
+        item {
+            Text("Efficiency Dashboard", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("Real-time battery & data savings compared to standard browsers.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+            
+            Spacer(modifier = Modifier.height(16.dp))
+    
+            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column {
+                        Text("Data Saved", style = MaterialTheme.typography.bodyMedium)
+                        Text("$dataSavedMb MB", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("Battery Saved", style = MaterialTheme.typography.bodyMedium)
+                        Text("$batterySaved %", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.Bold)
                     }
                 }
             }
-        }
+    
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Text("Items Blocked", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            DashboardCard("Ads & Trackers", blockedAds.toString())
+            Spacer(modifier = Modifier.height(8.dp))
+            DashboardCard("Heavy Videos", blockedVideos.toString())
+            Spacer(modifier = Modifier.height(8.dp))
+            DashboardCard("Heavy Images", blockedImages.toString())
+    
+            Spacer(modifier = Modifier.height(16.dp))
+    
+            Text("Hardware Monitors (Simulated)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            
+            HardwarePerformanceDashboard()
 
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = "Advanced rootless system interventions require Shizuku setup via ADB or Wireless Debugging. This dashboard previews local capabilities.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+            Spacer(modifier = Modifier.height(16.dp))
+    
+            Text("Shizuku Status", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+    
+            Card(modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (shizukuRunning) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = if (shizukuRunning) "Shizuku Service is RUNNING" else "Shizuku Service is STOPPED",
+                        fontWeight = FontWeight.Bold,
+                        color = if (shizukuRunning) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    Text(
+                        text = "Permission Granted: $shizukuPermission",
+                        color = if (shizukuRunning) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    if (shizukuRunning && !shizukuPermission) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(onClick = { ShizukuHelper.requestShizukuPermission(1001) }) {
+                            Text("Grant Permission")
+                        }
+                    }
+                }
+            }
+    
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Advanced rootless system interventions require Shizuku setup via ADB or Wireless Debugging. This dashboard previews local capabilities.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -334,4 +350,58 @@ fun getStorageInfo(): String {
     val availStorage = (statFs.availableBlocksLong * statFs.blockSizeLong) / (1024 * 1024)
     val totalStorage = (statFs.blockCountLong * statFs.blockSizeLong) / (1024 * 1024)
     return "${availStorage}MB / ${totalStorage}MB Free"
+}
+
+@Composable
+fun HardwarePerformanceDashboard() {
+    var cpuUsage by remember { mutableFloatStateOf(0f) }
+    var memoryUsage by remember { mutableFloatStateOf(0f) }
+    var currentClockSpeed by remember { mutableFloatStateOf(2.4f) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            cpuUsage = (10..85).random().toFloat()
+            memoryUsage = (40..95).random().toFloat()
+            currentClockSpeed = kotlin.random.Random.nextDouble(1.2, 3.6).toFloat()
+            kotlinx.coroutines.delay(1500)
+        }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("CPU Usage", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "${cpuUsage.toInt()}%",
+                    fontWeight = FontWeight.Bold,
+                    color = if (cpuUsage > 75f) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                )
+            }
+            LinearProgressIndicator(
+                progress = { cpuUsage / 100f },
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 12.dp)
+            )
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Memory Usage", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "${memoryUsage.toInt()}%",
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+            }
+            LinearProgressIndicator(
+                progress = { memoryUsage / 100f },
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 12.dp)
+            )
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Core Clock", style = MaterialTheme.typography.bodyMedium)
+                Text(String.format("%.2f GHz", currentClockSpeed), fontWeight = FontWeight.Bold)
+            }
+        }
+    }
 }

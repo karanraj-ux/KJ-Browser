@@ -1,1 +1,2 @@
-/build
+*.build/
+!SwiftCore_Browser.apk

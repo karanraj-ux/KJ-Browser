@@ -16,3 +16,7 @@
 local.properties
 .env
 debug.keystore
+
+# Explicitly UN-IGNORE the APK file so it gets included in GitHub and ZIP exports
+!SwiftCore_Browser.apk
+!*.apk

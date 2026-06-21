@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppRepository
 import com.example.data.OfflinePage
+import com.example.network.EcoAIEngine
 import com.example.network.WebFetcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -16,16 +17,22 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 enum class EcoMode(val title: String) {
-    STRICT_TEXT("Strict Text"),
-    LITE("Lite Mode"),
-    ORIGINAL("Original Mode")
+    STRICT_TEXT("Extreme Battery (Text Only)"),
+    LITE("Lite (Images On)"),
+    ORIGINAL("Standard (Full Web)")
 }
 
 data class BrowserTab(
     val id: String = UUID.randomUUID().toString(),
-    val url: String = "https://lite.cnn.com",
+    val url: String = "https://duckduckgo.com/lite",
     val title: String = "New Tab",
-    val ecoMode: EcoMode = EcoMode.LITE
+    val ecoMode: EcoMode = EcoMode.STRICT_TEXT,
+    val isLoading: Boolean = false,
+    val errorMessage: String? = null,
+    val isIncognito: Boolean = false,
+    val backStack: List<String> = emptyList(),
+    val forwardStack: List<String> = emptyList(),
+    val reloadTrigger: Int = 0 // To trigger WebView reloading
 )
 
 data class BrowserHistoryItem(
@@ -49,8 +56,30 @@ class MainViewModel(private val repository: AppRepository) : ViewModel() {
     private val _bookmarks = MutableStateFlow<List<String>>(emptyList())
     val bookmarks: StateFlow<List<String>> = _bookmarks.asStateFlow()
 
-    fun createNewTab(url: String = "about:blank") {
-        val newTab = BrowserTab(url = url)
+    // --- AI State ---
+    private val _quickAnswer = MutableStateFlow<String?>(null)
+    val quickAnswer: StateFlow<String?> = _quickAnswer.asStateFlow()
+
+    private val _isQuickAnswerLoading = MutableStateFlow(false)
+    val isQuickAnswerLoading: StateFlow<Boolean> = _isQuickAnswerLoading.asStateFlow()
+
+    private val _pageSummary = MutableStateFlow<String?>(null)
+    val pageSummary: StateFlow<String?> = _pageSummary.asStateFlow()
+
+    private val _isSummarizing = MutableStateFlow(false)
+    val isSummarizing: StateFlow<Boolean> = _isSummarizing.asStateFlow()
+    
+    // --- Stats ---
+    val blockedAds = com.example.util.StatsManager.blockedAds
+    val blockedVideos = com.example.util.StatsManager.blockedVideos
+    val blockedImages = com.example.util.StatsManager.blockedImages
+
+    init {
+        // Initial tab is ready, WebView will load it when active
+    }
+
+    fun createNewTab(url: String = "https://duckduckgo.com/lite", isIncognito: Boolean = false) {
+        val newTab = BrowserTab(url = url, isIncognito = isIncognito)
         _tabs.update { it + newTab }
         _activeTabId.value = newTab.id
     }
@@ -85,12 +114,62 @@ class MainViewModel(private val repository: AppRepository) : ViewModel() {
         }
     }
 
-    fun updateActiveTab(url: String, title: String) {
-        _tabs.update { currentTabs ->
-            currentTabs.map { tab ->
-                if (tab.id == _activeTabId.value) {
-                    tab.copy(url = url, title = title)
-                } else tab
+    fun loadUrlInActiveTab(url: String) {
+        val tab = _tabs.value.find { it.id == _activeTabId.value }
+        if (tab != null && tab.url != url) {
+            val newBackStack = tab.backStack + tab.url
+            _tabs.update { tabs ->
+                tabs.map { if (it.id == tab.id) it.copy(url = url, backStack = newBackStack, forwardStack = emptyList(), isLoading = true) else it }
+            }
+        }
+    }
+    
+    fun updateActiveTabTitleAndLoading(url: String, title: String, isLoading: Boolean, error: String? = null) {
+        _tabs.update { tabs ->
+            tabs.map { if (it.id == _activeTabId.value) it.copy(url = url, title = title, isLoading = isLoading, errorMessage = error) else it }
+        }
+        val tab = _tabs.value.find { it.id == _activeTabId.value }
+        if (tab != null && !tab.isIncognito && !isLoading && error == null) {
+            addToHistory(url, title)
+        }
+    }
+    
+    fun reloadActiveTab() {
+        _tabs.update { tabs ->
+            tabs.map { if (it.id == _activeTabId.value) it.copy(isLoading = true, reloadTrigger = it.reloadTrigger + 1) else it }
+        }
+    }
+    
+    fun canGoBack(): Boolean {
+        val tab = _tabs.value.find { it.id == _activeTabId.value }
+        return tab?.backStack?.isNotEmpty() == true
+    }
+    
+    fun canGoForward(): Boolean {
+        val tab = _tabs.value.find { it.id == _activeTabId.value }
+        return tab?.forwardStack?.isNotEmpty() == true
+    }
+    
+    fun goBack() {
+        val tab = _tabs.value.find { it.id == _activeTabId.value }
+        if (tab != null && tab.backStack.isNotEmpty()) {
+            val prevUrl = tab.backStack.last()
+            val newBackStack = tab.backStack.dropLast(1)
+            val newForwardStack = tab.forwardStack + tab.url
+            _tabs.update { tabs ->
+                tabs.map { if (it.id == tab.id) it.copy(url = prevUrl, backStack = newBackStack, forwardStack = newForwardStack, isLoading = true) else it }
+            }
+        }
+    }
+    
+    fun goForward() {
+        val tab = _tabs.value.find { it.id == _activeTabId.value }
+        if (tab != null && tab.forwardStack.isNotEmpty()) {
+            val nextUrl = tab.forwardStack.last()
+            val newForwardStack = tab.forwardStack.dropLast(1)
+            val newBackStack = tab.backStack + tab.url
+            _tabs.update { tabs ->
+                tabs.map { if (it.id == tab.id) it.copy(url = nextUrl, backStack = newBackStack, forwardStack = newForwardStack, isLoading = true) else it }
             }
         }
     }
@@ -98,13 +177,13 @@ class MainViewModel(private val repository: AppRepository) : ViewModel() {
     fun toggleEcoMode(tabId: String, mode: EcoMode) {
         _tabs.update { currentTabs ->
             currentTabs.map { tab ->
-                if (tab.id == tabId) tab.copy(ecoMode = mode) else tab
+                if (tab.id == tabId) tab.copy(ecoMode = mode, reloadTrigger = tab.reloadTrigger + 1) else tab
             }
         }
     }
 
     fun addToHistory(url: String, title: String) {
-        if (url == "about:blank" || url.trim().isEmpty()) return
+        if (url == "about:blank" || url.trim().isEmpty() || url.startsWith("data:")) return
         _history.update { current ->
             val newItem = BrowserHistoryItem(url, title)
             listOf(newItem) + current.filter { it.url != url }.take(99)
@@ -159,14 +238,11 @@ class MainViewModel(private val repository: AppRepository) : ViewModel() {
             _isDownloading.value = true
             _downloadStatus.value = "Fetching Eco Format..."
             
-            // First fetch the HTML just slightly to get the title, or we can use Jsoup to fetch directly but let's stick to our fetchTextOnly.
-            val resultHtml = WebFetcher.fetchHtml(url)
             val resultText = WebFetcher.fetchTextOnly(url)
             
-            if (resultText.isSuccess && resultHtml.isSuccess) {
-                val title = extractTitle(resultHtml.getOrDefault(""), url)
+            if (resultText.isSuccess) {
                 val textOnly = resultText.getOrDefault("")
-                val newPage = OfflinePage(url = url, title = title, htmlContent = textOnly)
+                val newPage = OfflinePage(url = url, title = url, htmlContent = textOnly)
                 repository.insert(newPage)
                 _downloadStatus.value = "Saved eco text locally!"
             } else {
@@ -187,9 +263,52 @@ class MainViewModel(private val repository: AppRepository) : ViewModel() {
         _downloadStatus.value = null
     }
 
-    private fun extractTitle(html: String, fallbackUrl: String): String {
-        val titleRegex = "<title>(.*?)</title>".toRegex(RegexOption.IGNORE_CASE)
-        val matchResult = titleRegex.find(html)
-        return matchResult?.groupValues?.getOrNull(1)?.trim() ?: fallbackUrl
+    // --- AI Methods ---
+    private var searchJob: kotlinx.coroutines.Job? = null
+
+    fun fetchQuickAnswer(query: String) {
+        if (query.isBlank()) {
+            clearQuickAnswer()
+            return
+        }
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            _isQuickAnswerLoading.value = true
+            _quickAnswer.value = null
+            val answer = EcoAIEngine.getQuickAnswer(query)
+            if (answer.isNotBlank()) {
+                _quickAnswer.value = answer
+            }
+            _isQuickAnswerLoading.value = false
+        }
+    }
+
+    fun clearQuickAnswer() {
+        searchJob?.cancel()
+        _quickAnswer.value = null
+        _isQuickAnswerLoading.value = false
+    }
+
+    fun saveLocalArchive(url: String, title: String, filePath: String) {
+        viewModelScope.launch {
+            val newPage = OfflinePage(url = url, title = title, htmlContent = "file://$filePath")
+            repository.insert(newPage)
+            _downloadStatus.value = "Saved archive locally!"
+        }
+    }
+
+    fun summarizeActivePageText(htmlContent: String) {
+        viewModelScope.launch {
+            _isSummarizing.value = true
+            _pageSummary.value = null
+            val res = EcoAIEngine.summarizePage(htmlContent)
+            _pageSummary.value = res
+            _isSummarizing.value = false
+        }
+    }
+
+    fun clearPageSummary() {
+        _pageSummary.value = null
     }
 }
+

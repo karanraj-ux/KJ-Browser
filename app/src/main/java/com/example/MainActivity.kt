@@ -24,6 +24,9 @@ class MainActivity : ComponentActivity() {
 
     val database = AppDatabase.getDatabase(this)
     val repository = AppRepository(database.offlinePageDao())
+    com.example.util.StatsManager.init(this)
+    com.example.util.PowerUserSettings.init(this)
+    com.example.util.AdBlocker.init()
 
     setContent {
       MyApplicationTheme {

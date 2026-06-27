@@ -23,10 +23,15 @@ class MainActivity : ComponentActivity() {
     enableEdgeToEdge()
 
     val database = AppDatabase.getDatabase(this)
-    val repository = AppRepository(database.offlinePageDao())
+    val repository = AppRepository(
+        database.offlinePageDao(),
+        database.browserHistoryDao(),
+        database.bookmarkDao()
+    )
     com.example.util.StatsManager.init(this)
     com.example.util.PowerUserSettings.init(this)
     com.example.util.AdBlocker.init()
+    com.example.util.ShizukuService.init()
 
     setContent {
       MyApplicationTheme {
@@ -42,6 +47,11 @@ class MainActivity : ComponentActivity() {
         }
       }
     }
+  }
+
+  override fun onDestroy() {
+    super.onDestroy()
+    com.example.util.ShizukuService.destroy()
   }
 }
 

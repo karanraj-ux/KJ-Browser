@@ -1,21 +1,35 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# EcoAI Browser
 
-# Run and deploy your AI Studio app
+EcoAI Browser is a modern, privacy-first, power-user Android web browser built entirely with Jetpack Compose. It focuses on speed, efficiency, and integrating on-device and cloud AI seamlessly into the browsing experience.
 
-This contains everything you need to run your app locally.
+## Features
 
-View your app in AI Studio: https://ai.studio/apps/f17bb781-aab8-4c57-93a0-0dbee5f40725
+- **Built-in AdBlocker**: Uses EasyList to block ads and trackers natively. Real-time adult-content blocking using Cloudflare Family DNS.
+- **Offline Vault**: Save web pages for offline reading. Uses a local Room Database to store cleaned-up HTML, removing banners and unnecessary scripts for distraction-free reading.
+- **Tab Suspension**: Put background tabs to sleep to reduce memory usage and save battery.
+- **AI Integration**: Summarize and chat with web pages using Gemini API, local SLMs, or custom endpoints.
+- **Power User Settings**: Inject custom CSS, JavaScript, and manage URL redirects.
+- **Command Palette**: Quickly search tabs, history, and trigger browser actions.
+- **Privacy First**: Quick incognito tabs, customizable DNS, and robust tracking protection.
 
-## Run Locally
+## Build Requirements
 
-**Prerequisites:**  [Android Studio](https://developer.android.com/studio)
+- Android Studio / Gradle 8+
+- Jetpack Compose
+- Kotlin
+- Minimum SDK: 26
 
+## Getting Started
 
-1. Open Android Studio
-2. Select **Open** and choose the directory containing this project
-3. Allow Android Studio to fix any incompatibilities as it imports the project.
-4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
-6. Run the app on an emulator or physical device
+1. Clone the repository.
+2. Open the project in Android Studio.
+3. Build and run `app` on a physical device or emulator.
+4. For AI features, you can add your API keys in the Power Settings menu inside the app.
+
+## Contributing
+
+Contributions are welcome! If you find a bug or have a feature request, please open an issue.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.

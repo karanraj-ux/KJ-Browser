@@ -37,6 +37,10 @@ class OfflineCacheService(private val context: Context) {
         }
     }
 
+    fun getCacheSize(): Long {
+        return cacheDir.walkTopDown().filter { it.isFile }.map { it.length() }.sum()
+    }
+
     fun clearCache() {
         cacheDir.listFiles()?.forEach { it.delete() }
     }

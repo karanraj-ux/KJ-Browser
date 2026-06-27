@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 enum class EcoMode(val title: String) {
@@ -30,16 +32,16 @@ data class BrowserTab(
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
     val isIncognito: Boolean = false,
+    val isDesktopMode: Boolean = false,
+    val isNativeReaderMode: Boolean = false,
+    val isSleeping: Boolean = false,
+    val nativeElements: List<com.example.network.ParsedElement>? = null,
+    val webViewState: android.os.Bundle? = null,
     val backStack: List<String> = emptyList(),
     val forwardStack: List<String> = emptyList(),
     val reloadTrigger: Int = 0 // To trigger WebView reloading
 )
 
-data class BrowserHistoryItem(
-    val url: String,
-    val title: String,
-    val timestamp: Long = System.currentTimeMillis()
-)
 
 class MainViewModel(private val repository: AppRepository) : ViewModel() {
 
@@ -50,11 +52,11 @@ class MainViewModel(private val repository: AppRepository) : ViewModel() {
     private val _activeTabId = MutableStateFlow(_tabs.value.first().id)
     val activeTabId: StateFlow<String> = _activeTabId.asStateFlow()
 
-    private val _history = MutableStateFlow<List<BrowserHistoryItem>>(emptyList())
-    val history: StateFlow<List<BrowserHistoryItem>> = _history.asStateFlow()
+    val history: StateFlow<List<com.example.data.BrowserHistory>> = repository.history
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
-    private val _bookmarks = MutableStateFlow<List<String>>(emptyList())
-    val bookmarks: StateFlow<List<String>> = _bookmarks.asStateFlow()
+    val bookmarks: StateFlow<List<com.example.data.Bookmark>> = repository.bookmarks
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     // --- AI State ---
     private val _quickAnswer = MutableStateFlow<String?>(null)
@@ -86,6 +88,7 @@ class MainViewModel(private val repository: AppRepository) : ViewModel() {
 
     fun switchTab(tabId: String) {
         _activeTabId.value = tabId
+        wakeActiveTabIfNeeded()
     }
 
     fun switchToNextTab() {
@@ -114,12 +117,44 @@ class MainViewModel(private val repository: AppRepository) : ViewModel() {
         }
     }
 
+    fun saveWebViewState(tabId: String, state: android.os.Bundle) {
+        _tabs.update { currentTabs ->
+            currentTabs.map { tab ->
+                if (tab.id == tabId) tab.copy(webViewState = state) else tab
+            }
+        }
+    }
+
     fun loadUrlInActiveTab(url: String) {
         val tab = _tabs.value.find { it.id == _activeTabId.value }
         if (tab != null && tab.url != url) {
             val newBackStack = tab.backStack + tab.url
             _tabs.update { tabs ->
-                tabs.map { if (it.id == tab.id) it.copy(url = url, backStack = newBackStack, forwardStack = emptyList(), isLoading = true) else it }
+                tabs.map { if (it.id == tab.id) it.copy(url = url, backStack = newBackStack, forwardStack = emptyList(), isLoading = true, isSleeping = false) else it }
+            }
+        }
+    }
+    
+    fun sleepBackgroundTabs() {
+        _tabs.update { tabs ->
+            tabs.map { 
+                if (it.id != _activeTabId.value && !it.isSleeping) {
+                    it.copy(isSleeping = true, webViewState = null) // Free memory
+                } else {
+                    it
+                }
+            }
+        }
+    }
+
+    fun wakeActiveTabIfNeeded() {
+        _tabs.update { tabs ->
+            tabs.map { 
+                if (it.id == _activeTabId.value && it.isSleeping) {
+                    it.copy(isSleeping = false, reloadTrigger = it.reloadTrigger + 1)
+                } else {
+                    it
+                }
             }
         }
     }
@@ -182,18 +217,74 @@ class MainViewModel(private val repository: AppRepository) : ViewModel() {
         }
     }
 
-    fun addToHistory(url: String, title: String) {
-        if (url == "about:blank" || url.trim().isEmpty() || url.startsWith("data:")) return
-        _history.update { current ->
-            val newItem = BrowserHistoryItem(url, title)
-            listOf(newItem) + current.filter { it.url != url }.take(99)
+    fun toggleDesktopMode(tabId: String) {
+        _tabs.update { currentTabs ->
+            currentTabs.map { tab ->
+                if (tab.id == tabId) tab.copy(isDesktopMode = !tab.isDesktopMode, reloadTrigger = tab.reloadTrigger + 1) else tab
+            }
         }
     }
 
-    fun toggleBookmark(url: String) {
-        _bookmarks.update { current ->
-            if (current.contains(url)) current.filter { it != url }
-            else current + url
+    fun toggleNativeReaderMode(tabId: String, currentUrl: String, injectedHtml: String? = null) {
+        _tabs.update { currentTabs ->
+            currentTabs.map { tab ->
+                if (tab.id == tabId) tab.copy(isNativeReaderMode = !tab.isNativeReaderMode, isLoading = !tab.isNativeReaderMode) else tab
+            }
+        }
+        val tab = _tabs.value.find { it.id == tabId }
+        if (tab != null && tab.isNativeReaderMode) {
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val html = if (!injectedHtml.isNullOrEmpty() && injectedHtml != "null") {
+                        // evaluateJavascript returns a JSON string, we need to unescape it if it's quoted
+                        var cleanHtml = injectedHtml
+                        if (cleanHtml.startsWith("\"") && cleanHtml.endsWith("\"")) {
+                            cleanHtml = cleanHtml.substring(1, cleanHtml.length - 1)
+                                .replace("\\u003C", "<")
+                                .replace("\\\"", "\"")
+                                .replace("\\\\", "\\")
+                                .replace("\\n", "\n")
+                                .replace("\\r", "\r")
+                                .replace("\\t", "\t")
+                        }
+                        cleanHtml
+                    } else {
+                        val client = okhttp3.OkHttpClient()
+                        val request = okhttp3.Request.Builder().url(currentUrl).build()
+                        val response = client.newCall(request).execute()
+                        response.body?.string() ?: ""
+                    }
+                    val elements = com.example.network.DomParser.parsePageAsComponents(html, currentUrl, fetchImages = true)
+                    withContext(Dispatchers.Main) {
+                        _tabs.update { currentTabs ->
+                            currentTabs.map { t ->
+                                if (t.id == tabId) t.copy(nativeElements = elements, isLoading = false) else t
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        _tabs.update { currentTabs ->
+                            currentTabs.map { t ->
+                                if (t.id == tabId) t.copy(isLoading = false, errorMessage = "Failed to load reader mode: ${e.message}") else t
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun addToHistory(url: String, title: String) {
+        if (url == "about:blank" || url.trim().isEmpty() || url.startsWith("data:")) return
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.insertHistory(url, title)
+        }
+    }
+
+    fun toggleBookmark(url: String, title: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.toggleBookmark(url, title)
         }
     }
 
@@ -243,7 +334,7 @@ class MainViewModel(private val repository: AppRepository) : ViewModel() {
             if (resultText.isSuccess) {
                 val textOnly = resultText.getOrDefault("")
                 val newPage = OfflinePage(url = url, title = url, htmlContent = textOnly)
-                repository.insert(newPage)
+                repository.insertPage(newPage)
                 _downloadStatus.value = "Saved eco text locally!"
             } else {
                 _downloadStatus.value = "Error: Failed to fetch url."
@@ -255,7 +346,7 @@ class MainViewModel(private val repository: AppRepository) : ViewModel() {
 
     fun deletePage(id: Int) {
         viewModelScope.launch {
-            repository.delete(id)
+            repository.deletePage(id)
         }
     }
 
@@ -292,7 +383,7 @@ class MainViewModel(private val repository: AppRepository) : ViewModel() {
     fun saveLocalArchive(url: String, title: String, filePath: String) {
         viewModelScope.launch {
             val newPage = OfflinePage(url = url, title = title, htmlContent = "file://$filePath")
-            repository.insert(newPage)
+            repository.insertPage(newPage)
             _downloadStatus.value = "Saved archive locally!"
         }
     }

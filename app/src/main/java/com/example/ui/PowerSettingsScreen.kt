@@ -40,6 +40,37 @@ fun PowerSettingsScreen() {
             Text("Bring Your Own API (BYOK) & Custom Controls", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
             Spacer(modifier = Modifier.height(24.dp))
         }
+        
+        item {
+            val isShizukuAvailable by com.example.util.ShizukuService.isAvailable.collectAsStateWithLifecycle()
+            val hasShizukuPermission by com.example.util.ShizukuService.hasPermission.collectAsStateWithLifecycle()
+            
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Shizuku Integration", fontWeight = FontWeight.Bold)
+                    Text("Enable deep system integration without root", style = MaterialTheme.typography.bodySmall)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    if (isShizukuAvailable) {
+                        if (hasShizukuPermission) {
+                            Text("Status: Connected & Authorized", color = MaterialTheme.colorScheme.primary)
+                        } else {
+                            Text("Status: Connected, Permission Required", color = MaterialTheme.colorScheme.error)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(onClick = { com.example.util.ShizukuService.requestPermission() }) {
+                                Text("Request Shizuku Permission")
+                            }
+                        }
+                    } else {
+                        Text("Status: Shizuku Service Not Running", color = MaterialTheme.colorScheme.error)
+                        Text("Install and start Shizuku to unlock advanced features like battery profiling and system hardware queries.", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
 
         item {
             Card(

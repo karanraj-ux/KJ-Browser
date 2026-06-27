@@ -39,7 +39,14 @@ roborazzi = "1.59.0"
 firebaseBom = "34.12.0"
 secretsGradlePlugin = "2.0.1"
 
+webkit = "1.12.0-alpha01"
+shizuku-api = "13.1.5"
+shizuku-provider = "13.1.5"
+
 [libraries]
+shizuku-api = { group = "dev.rikka.shizuku", name = "api", version.ref = "shizuku-api" }
+shizuku-provider = { group = "dev.rikka.shizuku", name = "provider", version.ref = "shizuku-provider" }
+androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }

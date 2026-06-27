@@ -7,6 +7,7 @@ import android.webkit.WebViewClient
 import android.webkit.WebSettings
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -22,8 +23,17 @@ import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.foundation.border
+
+// ...
+
+// Jump to Omnibox area
+
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,13 +42,19 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.webkit.WebViewCompat
+import androidx.webkit.ProfileStore
+import androidx.webkit.WebViewFeature
 import com.example.util.AdBlocker
 import java.io.ByteArrayInputStream
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BrowserScreen(viewModel: MainViewModel) {
+fun BrowserScreen(viewModel: MainViewModel, onNavigate: (String) -> Unit = {}) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val tabs by viewModel.tabs.collectAsStateWithLifecycle()
     val activeTabId by viewModel.activeTabId.collectAsStateWithLifecycle()
@@ -50,6 +66,7 @@ fun BrowserScreen(viewModel: MainViewModel) {
     var showTabSwitcher by remember { mutableStateOf(false) }
     var showEcoMenu by remember { mutableStateOf(false) }
     var showCommandPalette by remember { mutableStateOf(false) }
+    var showClipboardVault by remember { mutableStateOf(false) }
     
     val quickAnswer by viewModel.quickAnswer.collectAsStateWithLifecycle()
     val isQuickAnswerLoading by viewModel.isQuickAnswerLoading.collectAsStateWithLifecycle()
@@ -57,6 +74,25 @@ fun BrowserScreen(viewModel: MainViewModel) {
     val isSummarizing by viewModel.isSummarizing.collectAsStateWithLifecycle()
 
     var activeWebView by remember { mutableStateOf<WebView?>(null) }
+    
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, activeWebView) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    activeWebView?.onPause()
+                    activeWebView?.pauseTimers()
+                }
+                Lifecycle.Event.ON_RESUME, Lifecycle.Event.ON_START -> {
+                    activeWebView?.onResume()
+                    activeWebView?.resumeTimers()
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     LaunchedEffect(urlInput) {
         if (urlInput.isBlank() || (!urlInput.contains(" ") && !urlInput.endsWith("?"))) {
@@ -89,84 +125,198 @@ fun BrowserScreen(viewModel: MainViewModel) {
         return
     }
 
+    var uiVisible by remember { mutableStateOf(true) }
+
     Column(modifier = Modifier.fillMaxSize()) {
         // Omnibox Bar
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    // Eco Mode Output
-                    Box {
-                        IconButton(onClick = { showEcoMenu = true }) {
-                            Icon(
-                                imageVector = if (activeTab.ecoMode == EcoMode.ORIGINAL) Icons.Default.Info else Icons.Default.Star,
-                                contentDescription = "Eco Mode",
-                                tint = if (activeTab.ecoMode == EcoMode.ORIGINAL) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = showEcoMenu,
-                            onDismissRequest = { showEcoMenu = false }
+        androidx.compose.animation.AnimatedVisibility(visible = uiVisible) {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 2.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .padding(horizontal = 8.dp)
+                    ) {
+                    IconButton(onClick = { viewModel.loadUrlInActiveTab("https://duckduckgo.com/lite") }) {
+                        Icon(Icons.Default.Home, contentDescription = "Home")
+                    }
+
+                    // Compact Address Bar
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp)
+                            .padding(horizontal = 4.dp),
+                        shape = RoundedCornerShape(20.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 12.dp)
                         ) {
-                            DropdownMenuItem(
-                                text = { Text("Strict Text Mode") },
-                                onClick = {
-                                    viewModel.toggleEcoMode(activeTab.id, EcoMode.STRICT_TEXT)
-                                    showEcoMenu = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Lite Mode") },
-                                onClick = {
-                                    viewModel.toggleEcoMode(activeTab.id, EcoMode.LITE)
-                                    showEcoMenu = false
+                            androidx.compose.foundation.text.BasicTextField(
+                                value = urlInput,
+                                onValueChange = { urlInput = it },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                                keyboardOptions = KeyboardOptions(
+                                    imeAction = ImeAction.Go,
+                                    keyboardType = KeyboardType.Uri
+                                ),
+                                keyboardActions = KeyboardActions(
+                                    onGo = {
+                                        if (urlInput.isNotBlank()) {
+                                            val formattedUrl = if (urlInput.startsWith("http")) urlInput else {
+                                                if (urlInput.contains(".") && !urlInput.contains(" ")) "https://$urlInput"
+                                                else "https://duckduckgo.com/lite/?q=${urlInput.replace(" ", "+")}"
+                                            }
+                                            viewModel.loadUrlInActiveTab(formattedUrl)
+                                        }
+                                    }
+                                ),
+                                decorationBox = { innerTextField ->
+                                    if (urlInput.isEmpty()) {
+                                        Text("Search or type URL", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    innerTextField()
                                 }
                             )
                         }
                     }
 
-                    OutlinedTextField(
-                        value = urlInput,
-                        onValueChange = { urlInput = it },
-                        placeholder = { Text("Search or type URL") },
+                    Box(
                         modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 4.dp),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            imeAction = ImeAction.Go,
-                            keyboardType = KeyboardType.Uri
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onGo = {
-                                if (urlInput.isNotBlank()) {
-                                    val formattedUrl = if (urlInput.startsWith("http")) urlInput else {
-                                        if (urlInput.contains(".") && !urlInput.contains(" ")) "https://$urlInput"
-                                        else "https://duckduckgo.com/lite/?q=${urlInput.replace(" ", "+")}"
-                                    }
-                                    viewModel.loadUrlInActiveTab(formattedUrl)
-                                }
-                            }
-                        ),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surface,
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                        )
-                    )
-
-                    IconButton(
-                        onClick = { viewModel.downloadAndSavePage(activeTab.url) },
-                        enabled = !isDownloading
+                            .padding(horizontal = 4.dp)
+                            .size(24.dp)
+                            .border(2.dp, MaterialTheme.colorScheme.onSurface, RoundedCornerShape(4.dp))
+                            .clickable { showTabSwitcher = true },
+                        contentAlignment = Alignment.Center
                     ) {
-                        if (isDownloading) {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Default.AddCircle, contentDescription = "Save to Offline Vault")
+                        Text(
+                            tabs.size.toString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+
+                    var showMoreMenu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { showMoreMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "More Options")
+                        }
+                        DropdownMenu(
+                            expanded = showMoreMenu,
+                            onDismissRequest = { showMoreMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("New Tab") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    viewModel.createNewTab()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("New Incognito Tab") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    viewModel.createNewTab(isIncognito = true)
+                                }
+                            )
+                            Divider()
+                            DropdownMenuItem(
+                                text = { Text("Refresh") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    viewModel.reloadActiveTab()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Summarize Page") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    activeWebView?.evaluateJavascript("(function() { return document.body.innerText; })();") { innerText ->
+                                        if (!innerText.isNullOrBlank() && innerText != "null") {
+                                            viewModel.summarizeActivePageText(innerText)
+                                        } else {
+                                            viewModel.summarizeActivePageText("No text found on this page.")
+                                        }
+                                    }
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Save to Offline Vault") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    viewModel.downloadAndSavePage(activeTab.url)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Command Palette") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    showCommandPalette = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Toggle Desktop Mode") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    viewModel.toggleDesktopMode(activeTab.id)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Open in System Browser") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(activeTab.url))
+                                    context.startActivity(intent)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Sleep Background Tabs") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    viewModel.sleepBackgroundTabs()
+                                    android.widget.Toast.makeText(context, "Suspended inactive tabs to save memory", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                            Divider()
+                            DropdownMenuItem(
+                                text = { Text("Offline Vault") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    onNavigate("offline_vault")
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Quick Answer") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    onNavigate("quick_answer")
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Efficiency") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    onNavigate("system_info")
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Settings") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    onNavigate("power_settings")
+                                }
+                            )
                         }
                     }
                 }
@@ -217,16 +367,64 @@ fun BrowserScreen(viewModel: MainViewModel) {
                 }
             }
         }
+        } // End of AnimatedVisibility
 
-        // Native Rendered View
+        // Browser Screen Content
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
         ) {
-            AndroidView(
+            if (activeTab.isNativeReaderMode && activeTab.nativeElements != null) {
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(16.dp),
+                    contentPadding = PaddingValues(bottom = 80.dp)
+                ) {
+                    items(activeTab.nativeElements!!) { element ->
+                        when (element) {
+                            is com.example.network.ParsedElement.TextElement -> {
+                                val style = when (element.type) {
+                                    com.example.network.TextType.H1 -> MaterialTheme.typography.headlineLarge
+                                    com.example.network.TextType.H2 -> MaterialTheme.typography.headlineMedium
+                                    com.example.network.TextType.H3 -> MaterialTheme.typography.headlineSmall
+                                    com.example.network.TextType.H4, com.example.network.TextType.H5, com.example.network.TextType.H6 -> MaterialTheme.typography.titleLarge
+                                    com.example.network.TextType.BLOCKQUOTE -> MaterialTheme.typography.bodyLarge.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, color = MaterialTheme.colorScheme.secondary)
+                                    com.example.network.TextType.CODE -> MaterialTheme.typography.bodyMedium.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, background = MaterialTheme.colorScheme.surfaceVariant)
+                                    else -> MaterialTheme.typography.bodyLarge
+                                }
+                                val color = if (element.link != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
+                                Text(
+                                    text = element.text,
+                                    style = style,
+                                    color = color,
+                                    modifier = Modifier.padding(vertical = 4.dp).let {
+                                        if (element.link != null) it.clickable { viewModel.loadUrlInActiveTab(element.link) } else it
+                                    }
+                                )
+                            }
+                            is com.example.network.ParsedElement.ImageElement -> {
+                                if (activeTab.ecoMode != EcoMode.STRICT_TEXT) {
+                                    coil.compose.AsyncImage(
+                                        model = element.url,
+                                        contentDescription = element.alt,
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                AndroidView(
                 factory = { context ->
                     WebView(context).apply {
+                        if (activeTab.isIncognito) {
+                            if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+                                val profileStore = ProfileStore.getInstance()
+                                val profile = profileStore.getOrCreateProfile("incognito")
+                                WebViewCompat.setProfile(this, profile.name)
+                            }
+                        }
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                                 super.onPageStarted(view, url, favicon)
@@ -389,6 +587,24 @@ fun BrowserScreen(viewModel: MainViewModel) {
                     webView.settings.apply {
                         javaScriptEnabled = !com.example.util.PowerUserSettings.isJsDisabledForUrl(activeTab.url)
                         domStorageEnabled = true
+                        
+                        // Desktop Mode Logic
+                        if (activeTab.isDesktopMode) {
+                            userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                            useWideViewPort = true
+                            loadWithOverviewMode = true
+                            setSupportZoom(true)
+                            builtInZoomControls = true
+                            displayZoomControls = false
+                        } else {
+                            userAgentString = android.webkit.WebSettings.getDefaultUserAgent(context)
+                            useWideViewPort = false
+                            loadWithOverviewMode = false
+                            setSupportZoom(true)
+                            builtInZoomControls = true
+                            displayZoomControls = false
+                        }
+
                         if (activeTab.isIncognito) {
                             cacheMode = WebSettings.LOAD_NO_CACHE
                             // Set a private cache path or clear data
@@ -396,124 +612,75 @@ fun BrowserScreen(viewModel: MainViewModel) {
                             cacheMode = WebSettings.LOAD_DEFAULT
                         }
                     }
-
-                    // Handle navigation loading and reloading
-                    if (webView.url != activeTab.url) {
-                        webView.loadUrl(activeTab.url)
-                    } else if (activeTab.reloadTrigger > (webView.tag as? Int ?: 0)) {
-                        webView.reload()
-                    }
-                    webView.tag = activeTab.reloadTrigger
                     
-                    if (activeTab.isIncognito && webView.tag == null) {
+                    val tagMap = webView.tag as? MutableMap<String, Any> ?: mutableMapOf()
+                    val loadedTabId = tagMap["tabId"] as? String
+                    
+                    if (loadedTabId != activeTab.id) {
+                        if (loadedTabId != null) {
+                            val bundle = android.os.Bundle()
+                            webView.saveState(bundle)
+                            viewModel.saveWebViewState(loadedTabId, bundle)
+                        }
+                        
+                        tagMap["tabId"] = activeTab.id
+                        webView.tag = tagMap
+                        
+                        if (activeTab.webViewState != null) {
+                            webView.restoreState(activeTab.webViewState!!)
+                        } else {
+                            webView.loadUrl(activeTab.url)
+                        }
+                    } else {
+                        // Handle navigation loading and reloading for the SAME tab
+                        val lastReloadTrigger = tagMap["reloadTrigger"] as? Int ?: 0
+                        if (webView.url != activeTab.url && webView.url != null && activeTab.url != "about:blank") {
+                            webView.loadUrl(activeTab.url)
+                        } else if (activeTab.reloadTrigger > lastReloadTrigger) {
+                            webView.reload()
+                        }
+                        tagMap["reloadTrigger"] = activeTab.reloadTrigger
+                        webView.tag = tagMap
+                    }
+                    
+                    if (activeTab.isIncognito && (tagMap["incognitoCleared"] as? Boolean != true)) {
                         webView.clearCache(true)
                         webView.clearHistory()
                         webView.clearFormData()
-                        android.webkit.CookieManager.getInstance().setAcceptCookie(false)
-                        webView.tag = -1
+                        if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+                            val profile = ProfileStore.getInstance().getOrCreateProfile("incognito")
+                            profile.cookieManager.removeAllCookies(null)
+                        } else {
+                            android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                        }
+                        tagMap["incognitoCleared"] = true
+                        webView.tag = tagMap
                     }
                 },
                 modifier = Modifier.fillMaxSize()
             )
+            }
+            
+            // Fullscreen Toggle Button
+            IconButton(
+                onClick = { uiVisible = !uiVisible },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp)
+                    .size(40.dp)
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f), shape = RoundedCornerShape(20.dp))
+            ) {
+                Icon(
+                    if (uiVisible) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = "Toggle Fullscreen",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
 
-        // Bottom Navigation Controls
-        var dragX by remember { mutableFloatStateOf(0f) }
-        BottomAppBar(
-            modifier = Modifier.pointerInput(Unit) {
-                detectHorizontalDragGestures(
-                    onDragEnd = {
-                        if (dragX > 50) {
-                            viewModel.switchToPreviousTab()
-                        } else if (dragX < -50) {
-                            viewModel.switchToNextTab()
-                        }
-                        dragX = 0f
-                    },
-                    onHorizontalDrag = { change, dragAmount ->
-                        dragX += dragAmount
-                    }
-                )
-            },
-            actions = {
-                IconButton(onClick = { viewModel.goBack() }, enabled = viewModel.canGoBack()) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                }
-                IconButton(onClick = { viewModel.goForward() }, enabled = viewModel.canGoForward()) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Forward")
-                }
-                
-                IconButton(onClick = { viewModel.reloadActiveTab() }) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Refresh")
-                }
-                
-                var showMoreMenu by remember { mutableStateOf(false) }
-                IconButton(onClick = {
-                    activeWebView?.evaluateJavascript("(function() { return document.body.innerText; })();") { innerText ->
-                        if (!innerText.isNullOrBlank() && innerText != "null") {
-                            viewModel.summarizeActivePageText(innerText)
-                        } else {
-                            viewModel.summarizeActivePageText("No text found on this page.")
-                        }
-                    }
-                }) {
-                    Icon(Icons.Default.Star, contentDescription = "Summarize")
-                }
-                Box {
-                    IconButton(onClick = { showMoreMenu = true }) {
-                        Icon(androidx.compose.material.icons.Icons.Default.MoreVert, contentDescription = "More Options")
-                    }
-                    DropdownMenu(
-                        expanded = showMoreMenu,
-                        onDismissRequest = { showMoreMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Browsing History") },
-                            onClick = {
-                                showMoreMenu = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Save Page (Offline Archive)") },
-                            onClick = {
-                                showMoreMenu = false
-                                activeWebView?.let { view ->
-                                    val fileName = "archive_${System.currentTimeMillis()}.mht"
-                                    val filePath = java.io.File(context.filesDir, fileName).absolutePath
-                                    view.saveWebArchive(filePath)
-                                    viewModel.saveLocalArchive(activeTab.url, view.title ?: activeTab.url, filePath)
-                                }
-                            }
-                        )
-                        val isJsDisabled = com.example.util.PowerUserSettings.isJsDisabledForUrl(activeTab.url)
-                        DropdownMenuItem(
-                            text = { Text(if (isJsDisabled) "Enable JavaScript for site" else "Disable JavaScript (Fast mode)") },
-                            onClick = {
-                                showMoreMenu = false
-                                com.example.util.PowerUserSettings.toggleJsForDomain(activeTab.url)
-                                // Reload page to apply changes
-                                activeWebView?.reload()
-                            }
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.weight(1f))
-            },
-            floatingActionButton = {
-                Row {
-                    FloatingActionButton(
-                        onClick = { showCommandPalette = true },
-                        modifier = Modifier.padding(end = 8.dp),
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer
-                    ) {
-                        Text(">", style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold))
-                    }
-                    FloatingActionButton(onClick = { showTabSwitcher = true }) {
-                        Text(tabs.size.toString(), style = MaterialTheme.typography.titleMedium)
-                    }
-                }
-            }
-        )
+        // Bottom Navigation Controls removed in favor of top dropdown menu
+
     }
 
     if (showCommandPalette) {
@@ -593,6 +760,44 @@ fun BrowserScreen(viewModel: MainViewModel) {
             }
         )
     }
+
+    if (showClipboardVault) {
+        val sheetState = rememberModalBottomSheetState()
+        val vaultText by com.example.util.PowerUserSettings.vaultText.collectAsStateWithLifecycle()
+        var currentText by remember { mutableStateOf(vaultText) }
+        
+        ModalBottomSheet(
+            onDismissRequest = { 
+                com.example.util.PowerUserSettings.setVaultText(currentText)
+                showClipboardVault = false 
+            },
+            sheetState = sheetState
+        ) {
+            Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
+                Text("Context Clipboard (Vault)", style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                Text("Temporary scratchpad for copy/pasting. Saves locally.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = currentText,
+                    onValueChange = { currentText = it },
+                    modifier = Modifier.fillMaxWidth().height(250.dp),
+                    placeholder = { Text("Paste things here while browsing...") },
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = { 
+                        com.example.util.PowerUserSettings.setVaultText(currentText)
+                        showClipboardVault = false 
+                    },
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("Save & Close")
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -655,7 +860,12 @@ fun TabSwitcherScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(if (tab.isIncognito) "🕵️ ${tab.title}" else tab.title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                            val titleText = buildString {
+                                if (tab.isIncognito) append("🕵️ ")
+                                append(tab.title)
+                                if (tab.isSleeping) append(" 💤")
+                            }
+                            Text(titleText, style = MaterialTheme.typography.titleMedium, maxLines = 1)
                             Text(tab.url, style = MaterialTheme.typography.bodySmall, maxLines = 1)
                         }
                         IconButton(onClick = { onCloseTab(tab.id) }) {

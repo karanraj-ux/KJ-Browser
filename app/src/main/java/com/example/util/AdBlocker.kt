@@ -88,6 +88,7 @@ object AdBlocker {
     )
 
     private val dynamicBlockedDomains = mutableSetOf<String>()
+    private val dynamicSubstringRules = mutableSetOf<String>()
 
     fun init() {
         refreshSubscriptions()
@@ -98,11 +99,13 @@ object AdBlocker {
         val urls = PowerUserSettings.adBlockSubscriptions.value
         if (urls.isEmpty()) {
             dynamicBlockedDomains.clear()
+            dynamicSubstringRules.clear()
             return
         }
 
         kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val newDomains = mutableSetOf<String>()
+            val newSubstrings = mutableSetOf<String>()
             for (url in urls) {
                 try {
                     val client = okhttp3.OkHttpClient()
@@ -111,13 +114,23 @@ object AdBlocker {
                     if (response.isSuccessful) {
                         response.body?.string()?.lines()?.forEach { line ->
                             val cleanLine = line.trim()
-                            if (cleanLine.isNotBlank() && !cleanLine.startsWith("#")) {
-                                // Basic hosts file format parsing: "0.0.0.0 domain.com" or just "domain.com"
-                                val parts = cleanLine.split(Regex("\\s+"))
-                                if (parts.size >= 2 && (parts[0] == "0.0.0.0" || parts[0] == "127.0.0.1")) {
-                                    newDomains.add(parts[1].lowercase())
-                                } else if (parts.size == 1) { // raw domain format
-                                    newDomains.add(parts[0].lowercase())
+                            if (cleanLine.isNotBlank() && !cleanLine.startsWith("!")) {
+                                if (cleanLine.startsWith("||") && cleanLine.endsWith("^")) {
+                                    // EasyList domain rule: ||example.com^
+                                    newDomains.add(cleanLine.substring(2, cleanLine.length - 1).lowercase())
+                                } else if (cleanLine.startsWith("||")) {
+                                    newDomains.add(cleanLine.substring(2).lowercase())
+                                } else if (!cleanLine.startsWith("#") && !cleanLine.startsWith("@@") && cleanLine.length > 3) {
+                                    // Hosts format support
+                                    val parts = cleanLine.split(Regex("\\s+"))
+                                    if (parts.size >= 2 && (parts[0] == "0.0.0.0" || parts[0] == "127.0.0.1")) {
+                                        newDomains.add(parts[1].lowercase())
+                                    } else if (parts.size == 1 && !cleanLine.contains("/") && !cleanLine.contains("*")) { 
+                                        newDomains.add(parts[0].lowercase())
+                                    } else if (!cleanLine.startsWith("[")) { // skip tags like [Adblock Plus 2.0]
+                                        // Basic substring rule fallback
+                                        newSubstrings.add(cleanLine.replace("^", "").lowercase())
+                                    }
                                 }
                             }
                         }
@@ -128,6 +141,8 @@ object AdBlocker {
             }
             dynamicBlockedDomains.clear()
             dynamicBlockedDomains.addAll(newDomains)
+            dynamicSubstringRules.clear()
+            dynamicSubstringRules.addAll(newSubstrings)
         }
     }
 
@@ -136,9 +151,27 @@ object AdBlocker {
         return try {
             val uri = android.net.Uri.parse(url)
             val host = uri.host?.lowercase() ?: return false
-            if (AD_DOMAINS.any { domain -> host == domain || host.endsWith(".$domain") }) return true
-
-            if (dynamicBlockedDomains.contains(host)) return true
+            
+            // Check exact and suffix matches in O(1) by hashing segments
+            var currentHost = host
+            while (currentHost.isNotEmpty()) {
+                if (AD_DOMAINS.contains(currentHost) || dynamicBlockedDomains.contains(currentHost)) {
+                    return true
+                }
+                val dotIndex = currentHost.indexOf('.')
+                if (dotIndex == -1) break
+                currentHost = currentHost.substring(dotIndex + 1)
+            }
+            
+            // Substring rules (limit checks to prevent jank on huge lists)
+            val lowerUrl = url.lowercase()
+            // We only check the first 2000 rules if it's huge, to maintain 60fps
+            var checks = 0
+            for (rule in dynamicSubstringRules) {
+                if (lowerUrl.contains(rule)) return true
+                checks++
+                if (checks > 2000) break
+            }
             
             // Check custom domains from PowerUserSettings
             val customDomainsStr = PowerUserSettings.customAdBlockList.value
@@ -160,7 +193,11 @@ object AdBlocker {
     fun isAdultContent(url: String): Boolean {
         return try {
             val host = android.net.Uri.parse(url).host?.lowercase() ?: return false
-            ADULT_DOMAINS.any { domain -> host == domain || host.endsWith(".$domain") }
+            if (ADULT_DOMAINS.any { domain -> host == domain || host.endsWith(".$domain") }) {
+                return true
+            }
+            // Real-time DNS check via Cloudflare Family DNS (1.1.1.3)
+            return com.example.util.FamilyDnsChecker.isDomainBlocked(host)
         } catch (e: Exception) {
             false
         }

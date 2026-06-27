@@ -60,7 +60,7 @@ fun QuickAnswerScreen(viewModel: MainViewModel, onNavigateToWebCache: () -> Unit
                         isLoading = true
                         localAnswer = null
                         showWebFallback = false
-                        val answer = EcoAIEngine.query(query)
+                        val answer = com.example.network.EcoAIEngine.getQuickAnswer(query)
                         if (answer != null) {
                             localAnswer = answer
                         } else {
@@ -115,62 +115,3 @@ fun QuickAnswerScreen(viewModel: MainViewModel, onNavigateToWebCache: () -> Unit
     }
 }
 
-/**
- * Real Gemini API interface implemented using lightweight OkHttp + JSONObject
- * Keeps the app small and performs inference on the cloud to save device battery.
- */
-object EcoAIEngine {
-    private val client = OkHttpClient()
-
-    suspend fun query(q: String): String? = withContext(Dispatchers.IO) {
-        val apiKey = com.example.BuildConfig.GEMINI_API_KEY
-        if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
-            return@withContext "Error: Please add your Gemini API Key in the AI Studio Settings menu to use the AI Assistant."
-        }
-
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=\$apiKey"
-        
-        val requestBodyJson = JSONObject()
-        val contentsArray = JSONArray()
-        val contentObject = JSONObject()
-        val partsArray = JSONArray()
-        val partObject = JSONObject()
-        
-        partObject.put("text", q)
-        partsArray.put(partObject)
-        contentObject.put("parts", partsArray)
-        contentsArray.put(contentObject)
-        requestBodyJson.put("contents", contentsArray)
-
-        val mediaType = "application/json; charset=utf-8".toMediaType()
-        val requestBody = requestBodyJson.toString().toRequestBody(mediaType)
-
-        val request = Request.Builder()
-            .url(url)
-            .post(requestBody)
-            .build()
-
-        try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return@withContext "API Call Failed: \${response.code} \${response.message}"
-                }
-                val responseData = response.body?.string() ?: return@withContext null
-                val root = JSONObject(responseData)
-                val candidates = root.optJSONArray("candidates")
-                if (candidates != null && candidates.length() > 0) {
-                    val firstCandidate = candidates.getJSONObject(0)
-                    val content = firstCandidate.optJSONObject("content")
-                    val parts = content?.optJSONArray("parts")
-                    if (parts != null && parts.length() > 0) {
-                        return@withContext parts.getJSONObject(0).optString("text")
-                    }
-                }
-                return@withContext "No response text found."
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return@withContext null
-        }
-    }
-}

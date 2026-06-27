@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.data.OfflinePage
 import com.example.shizuku.ShizukuHelper
@@ -37,45 +38,52 @@ fun MainApp(viewModel: MainViewModel) {
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = listOf("Browser", "Offline Vault", "Quick Answer", "Efficiency", "Settings")
 
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route ?: "browser"
+
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Offline Hub") },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            if (currentRoute != "browser") {
+                TopAppBar(
+                    title = { Text("Offline Hub") },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
                 )
-            )
+            }
         },
         bottomBar = {
-            NavigationBar {
-                tabs.forEachIndexed { index, title ->
-                    NavigationBarItem(
-                        selected = selectedTab == index,
-                        onClick = {
-                            selectedTab = index
-                            when (index) {
-                                0 -> navController.navigate("browser") { popUpTo("browser") { inclusive = true } }
-                                1 -> navController.navigate("offline_vault") { popUpTo("offline_vault") { inclusive = true } }
-                                2 -> navController.navigate("quick_answer") { popUpTo("quick_answer") { inclusive = true } }
-                                3 -> navController.navigate("system_info") { popUpTo("system_info") { inclusive = true } }
-                                4 -> navController.navigate("power_settings") { popUpTo("power_settings") { inclusive = true } }
-                            }
-                        },
-                        icon = {
-                            Icon(
+            if (currentRoute != "browser") {
+                NavigationBar {
+                    tabs.forEachIndexed { index, title ->
+                        NavigationBarItem(
+                            selected = selectedTab == index,
+                            onClick = {
+                                selectedTab = index
                                 when (index) {
-                                    0 -> Icons.Default.Search // Browser
-                                    1 -> Icons.Default.List // Offline Vault
-                                    2 -> Icons.Default.Info // Quick Answer - reuse info icon or similar
-                                    3 -> Icons.Default.Info // Efficiency
-                                    else -> Icons.Default.Settings // Settings
-                                },
-                                contentDescription = title
-                            )
-                        },
-                        label = { Text(title) }
-                    )
+                                    0 -> navController.navigate("browser") { popUpTo("browser") { inclusive = true } }
+                                    1 -> navController.navigate("offline_vault") { popUpTo("offline_vault") { inclusive = true } }
+                                    2 -> navController.navigate("quick_answer") { popUpTo("quick_answer") { inclusive = true } }
+                                    3 -> navController.navigate("system_info") { popUpTo("system_info") { inclusive = true } }
+                                    4 -> navController.navigate("power_settings") { popUpTo("power_settings") { inclusive = true } }
+                                }
+                            },
+                            icon = {
+                                Icon(
+                                    when (index) {
+                                        0 -> Icons.Default.Search
+                                        1 -> Icons.Default.List
+                                        2 -> Icons.Default.Info
+                                        3 -> Icons.Default.Info
+                                        else -> Icons.Default.Settings
+                                    },
+                                    contentDescription = title
+                                )
+                            },
+                            label = { Text(title) }
+                        )
+                    }
                 }
             }
         }
@@ -90,7 +98,17 @@ fun MainApp(viewModel: MainViewModel) {
             popExitTransition = { androidx.compose.animation.ExitTransition.None }
         ) {
             composable("browser") {
-                BrowserScreen(viewModel)
+                BrowserScreen(viewModel, onNavigate = { route -> 
+                    val index = when (route) {
+                        "offline_vault" -> 1
+                        "quick_answer" -> 2
+                        "system_info" -> 3
+                        "power_settings" -> 4
+                        else -> 0
+                    }
+                    selectedTab = index
+                    navController.navigate(route) { popUpTo(route) { inclusive = true } } 
+                })
             }
             composable("offline_vault") {
                 WebCacheScreen(viewModel) { page ->
@@ -357,8 +375,12 @@ fun HardwarePerformanceDashboard() {
     var cpuUsage by remember { mutableFloatStateOf(0f) }
     var memoryUsage by remember { mutableFloatStateOf(0f) }
     var currentClockSpeed by remember { mutableFloatStateOf(2.4f) }
+    var offlineCacheBytes by remember { mutableLongStateOf(0L) }
+    val context = LocalContext.current
 
     LaunchedEffect(Unit) {
+        val cacheService = com.example.network.OfflineCacheService(context)
+        offlineCacheBytes = cacheService.getCacheSize()
         while (true) {
             cpuUsage = (10..85).random().toFloat()
             memoryUsage = (40..95).random().toFloat()
@@ -402,6 +424,25 @@ fun HardwarePerformanceDashboard() {
                 Text("Core Clock", style = MaterialTheme.typography.bodyMedium)
                 Text(String.format("%.2f GHz", currentClockSpeed), fontWeight = FontWeight.Bold)
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            val cacheMb = offlineCacheBytes / (1024f * 1024f)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Web Cache Storage", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    String.format("%.2f MB", cacheMb),
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+            }
+            // Assuming a modest soft cap of 100MB for visual representation of the progress bar
+            LinearProgressIndicator(
+                progress = { (cacheMb / 100f).coerceIn(0f, 1f) },
+                color = MaterialTheme.colorScheme.tertiary,
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp)
+            )
+            Text("Soft cap at 100 MB", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

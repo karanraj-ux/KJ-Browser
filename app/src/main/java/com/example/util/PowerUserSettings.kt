@@ -66,6 +66,10 @@ object PowerUserSettings {
     private val _urlRedirects = MutableStateFlow<Map<String, String>>(emptyMap())
     val urlRedirects: StateFlow<Map<String, String>> = _urlRedirects.asStateFlow()
 
+    private val KEY_VAULT_TEXT = "vault_text"
+    private val _vaultText = MutableStateFlow("")
+    val vaultText: StateFlow<String> = _vaultText.asStateFlow()
+
     fun init(context: Context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         
@@ -102,12 +106,19 @@ object PowerUserSettings {
         _slmModelPath.value = prefs.getString(KEY_SLM_MODEL_PATH, "") ?: ""
         _customDns.value = prefs.getString(KEY_CUSTOM_DNS, "") ?: ""
         _customAdBlockList.value = prefs.getString(KEY_CUSTOM_AD_BLOCK_LIST, "") ?: ""
-        _adBlockSubscriptions.value = prefs.getStringSet(KEY_AD_BLOCK_SUBSCRIPTIONS, emptySet()) ?: emptySet()
+        
+        val defaultSubscriptions = setOf(
+            "https://easylist.to/easylist/easylist.txt",
+            "https://easylist.to/easylist/easyprivacy.txt"
+        )
+        _adBlockSubscriptions.value = prefs.getStringSet(KEY_AD_BLOCK_SUBSCRIPTIONS, defaultSubscriptions) ?: defaultSubscriptions
+        
         _disabledJsDomains.value = prefs.getStringSet(KEY_DISABLED_JS_DOMAINS, emptySet()) ?: emptySet()
         
         _userScripts.value = parseStringMap(prefs.getString(KEY_USER_SCRIPTS, "{}") ?: "{}")
         _userStyles.value = parseStringMap(prefs.getString(KEY_USER_STYLES, "{}") ?: "{}")
         _urlRedirects.value = parseStringMap(prefs.getString(KEY_URL_REDIRECTS, "{}") ?: "{}")
+        _vaultText.value = prefs.getString(KEY_VAULT_TEXT, "") ?: ""
     }
 
     private fun parseStringMap(jsonString: String): Map<String, String> {
@@ -242,5 +253,10 @@ object PowerUserSettings {
         current.remove(matchDomain)
         _urlRedirects.value = current
         prefs.edit().putString(KEY_URL_REDIRECTS, mapToString(current)).apply()
+    }
+
+    fun setVaultText(text: String) {
+        _vaultText.value = text
+        prefs.edit().putString(KEY_VAULT_TEXT, text).apply()
     }
 }
